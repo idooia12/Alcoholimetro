@@ -2,6 +2,7 @@ import smbus2
 import time
 import RPi.GPIO as GPIO
 import threading
+from collections import deque  # IMPORTANTE: Para guardar el historial
 from flask import Flask, render_template, jsonify
 
 # Importar librerías de OLED
@@ -27,12 +28,26 @@ MAX_ADC_RAW = 4095
 DELTA_MINIMO = 40 
 DELTA_POSITIVO = 100 
 
+# Factor de conversión (Calibrado según tus datos)
+RAW_TO_MGL = 0.25 / 150 
+
 # --- VARIABLES GLOBALES COMPARTIDAS ---
-baseline_raw = 0 
-global_raw_value = 0
-global_rs_ro_ratio = 0.0 
+baseline_raw = 1380 # Valor inicial seguro
+global_data = {     # Guardamos todo aquí para acceso rápido
+    "raw": 0,
+    "diff": 0,
+    "concentration": 0.0,
+    "baseline": 0,
+    "ratio": 0.0,
+    "status_text": "INIT",
+    "level": 0
+}
+
+# Buffer para la gráfica (últimos 60 puntos)
+history_buffer = deque(maxlen=60)
+
 running = True
-value_lock = threading.Lock() # Para evitar conflictos entre Flask y el Sensor
+value_lock = threading.Lock() 
 oled_device = None
 
 # --- FUNCIONES HARDWARE ---
@@ -111,65 +126,79 @@ def draw_progress_bar(draw, value, max_value, y_pos):
 def index():
     return render_template('index.html')
 
+@app.route('/grafica')
+def grafica():
+    return render_template('grafica.html')
+
 @app.route('/data')
 def get_data_json():
-    # Accedemos a las variables globales de forma segura
+    # Devolvemos los datos calculados en el hilo del sensor
     with value_lock:
-        raw = global_raw_value
-        ratio = global_rs_ro_ratio
-        base = baseline_raw
+        return jsonify(global_data)
 
-    # Lógica de cálculo (Idéntica a la UI local)
-    diff = max(0, base - raw)
-    raw_to_mgl = 0.25 / 150 
-    conc = diff * raw_to_mgl
-    status_text, level = get_alcohol_level(diff)
-
-    return jsonify({
-        'raw': raw,
-        'baseline': base,
-        'diff': diff,
-        'ratio': ratio,
-        'concentration': conc,
-        'status_text': status_text,
-        'level': level
-    })
+@app.route('/history')
+def get_history_json():
+    # Devolvemos la lista completa del historial
+    with value_lock:
+        return jsonify(list(history_buffer))
 
 # --- HILOS DE EJECUCIÓN ---
 
 def sensor_loop():
-    global global_raw_value, global_rs_ro_ratio
+    """Hilo principal: Lee sensor, calcula y guarda historial"""
+    global global_data
+    
     while running:
         raw = read_adc_raw()
         ratio = calculate_rs_ro_ratio(raw)
-        with value_lock:
-            global_raw_value = raw
-            global_rs_ro_ratio = ratio
-        time.sleep(0.1)
-
-def ui_local_loop():
-    """Controla la pantalla OLED y LEDs locales"""
-    raw_to_mgl = 0.25 / 150 
-    while running:
-        with value_lock:
-            raw = global_raw_value
-            base = baseline_raw
-
-        diff = max(0, base - raw)
-        conc = diff * raw_to_mgl
+        
+        # Cálculos Matemáticos
+        diff = max(0, baseline_raw - raw)
+        conc = diff * RAW_TO_MGL
         status_text, level = get_alcohol_level(diff)
         
-        update_leds(level)
+        # Fecha para la gráfica
+        timestamp = time.strftime("%H:%M:%S")
+
+        with value_lock:
+            # 1. Actualizar datos actuales
+            global_data = {
+                'raw': raw,
+                'baseline': baseline_raw,
+                'diff': diff,
+                'ratio': ratio,
+                'concentration': conc,
+                'status_text': status_text,
+                'level': level
+            }
+            
+            # 2. Guardar en historial para la gráfica
+            history_buffer.append({
+                "time": timestamp,
+                "val": conc
+            })
+
+        time.sleep(0.5) # Muestreo cada 0.5 segundos
+
+def ui_local_loop():
+    """Controla la pantalla OLED y LEDs (Solo visualización)"""
+    while running:
+        # Leemos los datos ya calculados por el otro hilo
+        with value_lock:
+            data = global_data.copy()
+        
+        # Hardware local
+        update_leds(data['level'])
 
         if oled_device:
             with canvas(oled_device) as draw:
                 draw.text((0, 0), "Alcoholimetro Web", fill="white")
-                draw.text((0, 16), status_text, fill="white")
-                draw.text((60, 16), f"{conc:.2f} mg/L", fill="white")
-                draw_progress_bar(draw, diff, 250, 32)
-                draw.text((0, 48), f"IP: Ver consola", fill="white")
+                draw.text((0, 16), data['status_text'], fill="white")
+                draw.text((60, 16), f"{data['concentration']:.2f} mg/L", fill="white")
+                draw_progress_bar(draw, data['diff'], 250, 32)
+                draw.text((0, 48), f"IP: :5000", fill="white")
         
-        time.sleep(0.2)
+        time.sleep(0.1)
 
 # --- MAIN ---
 
@@ -181,23 +210,23 @@ def main():
     
     calibrate_sensor()
 
-    # 1. Hilo Sensor (Lee datos constantemente)
+    # 1. Hilo Sensor (Cerebro: lee y calcula)
     t_sensor = threading.Thread(target=sensor_loop)
     t_sensor.start()
 
-    # 2. Hilo UI Local (OLED y LEDs)
+    # 2. Hilo UI Local (Pantalla y LEDs)
     t_ui = threading.Thread(target=ui_local_loop)
     t_ui.start()
 
     # 3. Hilo Servidor Web (Flask)
-    # Flask bloquea la ejecución, por eso lo lanzamos en un hilo aparte
     print("Iniciando servidor web...")
     t_flask = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False))
-    t_flask.daemon = True # Se cerrará si el programa principal muere
+    t_flask.daemon = True 
     t_flask.start()
 
     print("SISTEMA LISTO.")
-    print("Accede vía web en: http://<IP-DE-TU-RASPBERRY>:5000")
+    print(" -> Medidor:  http://<IP>:5000/")
+    print(" -> Gráfica:  http://<IP>:5000/grafica")
 
     try:
         while True: time.sleep(1)
