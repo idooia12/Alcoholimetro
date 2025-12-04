@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alcoholímetro Pi</title>
+    <!-- Importamos una fuente moderna -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto:wght@300;400&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-color: #e2e8f0;
+            --accent-safe: #10b981;   /* Verde */
+            --accent-warn: #f59e0b;   /* Amarillo/Naranja */
+            --accent-danger: #ef4444; /* Rojo */
+            --glow-safe: 0 0 20px rgba(16, 185, 129, 0.5);
+            --glow-warn: 0 0 20px rgba(245, 158, 11, 0.5);
+            --glow-danger: 0 0 20px rgba(239, 68, 68, 0.5);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Roboto', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+            transition: background-color 0.5s ease;
+        }
+
+        h1 {
+            font-family: 'Orbitron', sans-serif;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: #fff;
+            text-shadow: 0 0 10px rgba(255,255,255,0.3);
+        }
+
+        /* Tarjeta Principal */
+        .main-card {
+            background-color: var(--card-bg);
+            border-radius: 20px;
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            position: relative;
+            overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+
+        /* Indicador Circular (SVG) */
+        .gauge-container {
+            position: relative;
+            width: 250px;
+            height: 250px;
+            margin: 0 auto 20px;
+        }
+
+        svg {
+            transform: rotate(-90deg);
+            width: 100%;
+            height: 100%;
+        }
+
+        circle {
+            fill: none;
+            stroke-width: 15;
+            stroke-linecap: round;
+        }
+
+        .circle-bg {
+            stroke: #334155;
+        }
+
+        .circle-progress {
+            stroke: var(--accent-safe);
+            stroke-dasharray: 630; /* 2 * PI * r (approx for r=100) */
+            stroke-dashoffset: 630;
+            transition: stroke-dashoffset 0.5s ease, stroke 0.5s ease, filter 0.5s ease;
+        }
+
+        /* Texto Central */
+        .gauge-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .value-display {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 3.5rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .unit-display {
+            font-size: 1rem;
+            color: #94a3b8;
+            margin-top: -5px;
+        }
+
+        /* Estado (Normal, Traza, Alcohol) */
+        .status-badge {
+            display: inline-block;
+            padding: 10px 20px;
+            border-radius: 50px;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-family: 'Orbitron', sans-serif;
+            margin-bottom: 20px;
+            background: rgba(255,255,255,0.1);
+            transition: all 0.3s ease;
+        }
+
+        /* Datos Técnicos (Raw/Diff) */
+        .tech-data {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #334155;
+        }
+
+        .data-item {
+            background: rgba(0,0,0,0.2);
+            padding: 10px;
+            border-radius: 10px;
+        }
+
+        .data-label {
+            font-size: 0.7rem;
+            color: #94a3b8;
+            text-transform: uppercase;
+        }
+
+        .data-value {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.2rem;
+            color: #fff;
+        }
+
+        /* Footer */
+        .footer {
+            margin-top: 30px;
+            font-size: 0.8rem;
+            color: #64748b;
+        }
+
+        /* Clases de estado dinámicas */
+        .state-normal .circle-progress { stroke: var(--accent-safe); filter: drop-shadow(var(--glow-safe)); }
+        .state-normal .status-badge { color: var(--accent-safe); border: 2px solid var(--accent-safe); box-shadow: var(--glow-safe); }
+        
+        .state-trace .circle-progress { stroke: var(--accent-warn); filter: drop-shadow(var(--glow-warn)); }
+        .state-trace .status-badge { color: var(--accent-warn); border: 2px solid var(--accent-warn); box-shadow: var(--glow-warn); }
+
+        .state-alcohol .circle-progress { stroke: var(--accent-danger); filter: drop-shadow(var(--glow-danger)); }
+        .state-alcohol .status-badge { color: var(--accent-danger); border: 2px solid var(--accent-danger); box-shadow: var(--glow-danger); }
+        .state-alcohol .value-display { animation: pulse 1s infinite; }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+    </style>
+</head>
+<body class="state-normal">
+
+    <h1>Alcoholímetro Pi</h1>
+
+    <div class="main-card">
+        <!-- Badge de estado -->
+        <div id="status-text" class="status-badge">ESPERANDO...</div>
+
+        <!-- Gauge Circular -->
+        <div class="gauge-container">
+            <svg>
+                <!-- Fondo del círculo -->
+                <circle class="circle-bg" cx="50%" cy="50%" r="100"></circle>
+                <!-- Progreso -->
+                <circle id="progress-ring" class="circle-progress" cx="50%" cy="50%" r="100"></circle>
+            </svg>
+            
+            <div class="gauge-text">
+                <span id="conc-value" class="value-display">0.00</span>
+                <span class="unit-display">mg/L</span>
+            </div>
+        </div>
+
+        <!-- Datos Técnicos -->
+        <div class="tech-data">
+            <div class="data-item">
+                <div class="data-label">Sensor RAW</div>
+                <div id="raw-value" class="data-value">0</div>
+            </div>
+            <div class="data-item">
+                <div class="data-label">Delta (Diff)</div>
+                <div id="diff-value" class="data-value">0</div>
+            </div>
+            <div class="data-item">
+                <div class="data-label">Base</div>
+                <div id="base-value" class="data-value">0</div>
+            </div>
+            <div class="data-item">
+                <div class="data-label">Ratio</div>
+                <div id="ratio-value" class="data-value">0.0</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        Conectado a Raspberry Pi • Actualización en tiempo real
+    </div>
+
+    <script>
+        // CONFIGURACIÓN
+        // Cambia esto a false cuando lo integres con Flask
+        const SIMULATION_MODE = false; 
+
+        // Elementos del DOM
+        const elBody = document.body;
+        const elProgress = document.getElementById('progress-ring');
+        const elConc = document.getElementById('conc-value');
+        const elStatus = document.getElementById('status-text');
+        const elRaw = document.getElementById('raw-value');
+        const elDiff = document.getElementById('diff-value');
+        const elBase = document.getElementById('base-value');
+        const elRatio = document.getElementById('ratio-value');
+
+        // Configuración del Círculo
+        const radius = 100;
+        const circumference = 2 * Math.PI * radius;
+        elProgress.style.strokeDasharray = `${circumference} ${circumference}`;
+        elProgress.style.strokeDashoffset = circumference;
+
+        function setProgress(percent) {
+            const offset = circumference - (percent / 100) * circumference;
+            elProgress.style.strokeDashoffset = offset;
+        }
+
+        function updateInterface(data) {
+            // Actualizar textos
+            elConc.textContent = data.concentration.toFixed(2);
+            elRaw.textContent = data.raw;
+            elDiff.textContent = data.diff;
+            elBase.textContent = data.baseline;
+            elRatio.textContent = data.ratio.toFixed(2);
+            elStatus.textContent = data.status_text;
+
+            // Calcular porcentaje para la barra visual (Max estimado 0.50 mg/L o tu max diff)
+            // Asumimos que 0.50 mg/L es el 100% de la barra visual para efectos dramáticos
+            let visualPercent = (data.concentration / 0.50) * 100;
+            if (visualPercent > 100) visualPercent = 100;
+            setProgress(visualPercent);
+
+            // Cambiar colores según nivel
+            elBody.className = ''; // Limpiar clases
+            if (data.level === 2) {
+                elBody.classList.add('state-alcohol');
+            } else if (data.level === 1) {
+                elBody.classList.add('state-trace');
+            } else {
+                elBody.classList.add('state-normal');
+            }
+        }
+
+        async function fetchData() {
+            if (SIMULATION_MODE) {
+                // Simulación para probar sin la Raspberry
+                const fakeConc = Math.random() * 0.6;
+                let lvl = 0;
+                let txt = "NORMAL";
+                if(fakeConc > 0.10) { lvl = 1; txt = "TRAZA"; }
+                if(fakeConc > 0.25) { lvl = 2; txt = "ALCOHOL"; }
+                
+                updateInterface({
+                    concentration: fakeConc,
+                    raw: Math.floor(1000 + Math.random() * 500),
+                    diff: Math.floor(fakeConc * 1000),
+                    baseline: 1380,
+                    ratio: 1.2,
+                    status_text: txt,
+                    level: lvl
+                });
+            } else {
+                // Modo Real: Petición a Flask
+                try {
+                    const response = await fetch('/data');
+                    const data = await response.json();
+                    updateInterface(data);
+                } catch (error) {
+                    console.error("Error conectando con el sensor:", error);
+                    elStatus.textContent = "DESCONECTADO";
+                }
+            }
+        }
+
+        // Actualizar cada 500ms
+        setInterval(fetchData, 500);
+
+    </script>
+</body>
+</html>
