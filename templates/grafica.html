@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Historial - Alcoholímetro Pi</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto:wght@300;400&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-color: #e2e8f0;
+            --accent-safe: #10b981;   
+            --accent-danger: #ef4444; 
+            --accent-graph: #3b82f6;  /* Azul para la gráfica */
+            --glow-graph: 0 0 15px rgba(59, 130, 246, 0.5);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Roboto', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        /* Navbar Simple */
+        .nav {
+            width: 100%;
+            max-width: 600px;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .nav-link {
+            text-decoration: none;
+            color: #64748b;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: bold;
+            padding: 10px 20px;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            background: rgba(255,255,255,0.05);
+        }
+
+        .nav-link.active {
+            color: #fff;
+            background: var(--accent-graph);
+            box-shadow: var(--glow-graph);
+        }
+
+        h1 {
+            font-family: 'Orbitron', sans-serif;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            text-shadow: 0 0 10px rgba(255,255,255,0.2);
+        }
+
+        .subtitle {
+            color: #94a3b8;
+            margin-bottom: 30px;
+            font-size: 0.9rem;
+        }
+
+        /* Contenedor de la Gráfica */
+        .chart-card {
+            background-color: var(--card-bg);
+            border-radius: 20px;
+            padding: 20px;
+            width: 100%;
+            max-width: 700px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.05);
+            position: relative;
+        }
+
+        /* Stats en tiempo real debajo de la gráfica */
+        .live-stats {
+            display: flex;
+            justify-content: space-around;
+            width: 100%;
+            max-width: 600px;
+            margin-top: 30px;
+        }
+
+        .stat-box {
+            background: rgba(255,255,255,0.05);
+            padding: 15px 25px;
+            border-radius: 12px;
+            text-align: center;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stat-value {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-color);
+            margin-top: 5px;
+        }
+
+        .text-danger { color: var(--accent-danger); text-shadow: 0 0 10px rgba(239, 68, 68, 0.5); }
+        .text-safe { color: var(--accent-safe); }
+
+    </style>
+</head>
+<body>
+
+    <div class="nav">
+        <a href="/" class="nav-link">MEDIDOR</a> 
+        <a href="/grafica" class="nav-link active">HISTORIAL</a>
+    </div>
+
+    <h1>Análisis Temporal</h1>
+    <div class="subtitle">Evolución de concentración en tiempo real</div>
+
+    <div class="chart-card">
+        <canvas id="alcoholChart"></canvas>
+    </div>
+
+    <div class="live-stats">
+        <div class="stat-box">
+            <div class="stat-label">Pico Máximo</div>
+            <div id="max-val" class="stat-value">0.00</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Actual</div>
+            <div id="curr-val" class="stat-value">0.00</div>
+        </div>
+    </div>
+
+    <script>
+        const ctx = document.getElementById('alcoholChart').getContext('2d');
+        
+        // Configuración inicial del gráfico
+        // Creamos un degradado para el relleno
+        let gradient = ctx.createLinearGradient(0, 0, 0, 400);
+        gradient.addColorStop(0, 'rgba(59, 130, 246, 0.5)'); // Azul arriba
+        gradient.addColorStop(1, 'rgba(59, 130, 246, 0.0)'); // Transparente abajo
+
+        const alcoholChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [], // Se llenará dinámicamente
+                datasets: [{
+                    label: 'Concentración (mg/L)',
+                    data: [],
+                    borderColor: '#3b82f6', // Color de línea
+                    backgroundColor: gradient,
+                    borderWidth: 3,
+                    pointBackgroundColor: '#fff',
+                    pointRadius: 2,
+                    fill: true,
+                    tension: 0.4 // Curvatura suave
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { display: false } // Ocultar leyenda
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                        ticks: { color: '#64748b' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        suggestedMax: 0.5, // Fija el techo visual inicial
+                        grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                        ticks: { color: '#64748b' }
+                    }
+                },
+                animation: { duration: 0 } // Desactivar animación de carga para fluidez
+            }
+        });
+
+        let maxRecorded = 0;
+
+        async function updateGraph() {
+            try {
+                // 1. Obtener datos actuales
+                const response = await fetch('/data');
+                const data = await response.json();
+
+                // 2. Actualizar valores numéricos abajo
+                const currentVal = data.concentration;
+                const timeLabel = new Date().toLocaleTimeString('es-ES', { hour12: false });
+
+                document.getElementById('curr-val').textContent = currentVal.toFixed(2);
+                
+                // Actualizar máximo
+                if (currentVal > maxRecorded) maxRecorded = currentVal;
+                document.getElementById('max-val').textContent = maxRecorded.toFixed(2);
+
+                // Cambiar color si es alto
+                const currEl = document.getElementById('curr-val');
+                if(data.level === 2) {
+                    currEl.classList.add('text-danger');
+                    alcoholChart.data.datasets[0].borderColor = '#ef4444'; // Línea roja
+                } else {
+                    currEl.classList.remove('text-danger');
+                    alcoholChart.data.datasets[0].borderColor = '#3b82f6'; // Línea azul
+                }
+
+                // 3. Empujar datos al gráfico
+                // Añadir nuevo punto
+                alcoholChart.data.labels.push(timeLabel);
+                alcoholChart.data.datasets[0].data.push(currentVal);
+
+                // Mantener solo los últimos 30 puntos para que no se apiñe
+                if (alcoholChart.data.labels.length > 30) {
+                    alcoholChart.data.labels.shift();
+                    alcoholChart.data.datasets[0].data.shift();
+                }
+
+                alcoholChart.update();
+
+            } catch (err) {
+                console.error("Error fetching data", err);
+            }
+        }
+
+        // Cargar historial inicial (opcional, si quieres que al abrir ya haya datos)
+        async function loadHistory() {
+            try {
+                const res = await fetch('/history');
+                const history = await res.json();
+                
+                // Limpiar
+                alcoholChart.data.labels = [];
+                alcoholChart.data.datasets[0].data = [];
+
+                history.forEach(point => {
+                    alcoholChart.data.labels.push(point.time);
+                    alcoholChart.data.datasets[0].data.push(point.val);
+                });
+                alcoholChart.update();
+            } catch(e) { console.log("No history yet"); }
+        }
+
+        // Iniciar
+        loadHistory();
+        setInterval(updateGraph, 500); // Actualizar cada medio segundo
+
+    </script>
+</body>
+</html>
